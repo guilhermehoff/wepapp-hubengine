@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">HubEngine</string>
+    <string name="offline_message">Sem conexão com a internet.\nVerifique sua rede e tente novamente.</string>
+    <string name="retry">Tentar novamente</string>
+    <string name="fab_qr_desc">Ler QR Code pela câmera</string>
+    <string name="pdf_downloading">Baixando PDF…</string>
+    <string name="pdf_downloaded">PDF baixado</string>
+    <string name="pdf_open">Abrir</string>
+</resources>
