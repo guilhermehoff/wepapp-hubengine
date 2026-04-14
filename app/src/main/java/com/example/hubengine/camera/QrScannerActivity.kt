@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -12,7 +13,6 @@ import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import com.example.hubengine.R
 import com.google.mlkit.vision.barcode.BarcodeScanning
-import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -21,6 +21,9 @@ class QrScannerActivity : AppCompatActivity() {
 
     private lateinit var previewView: PreviewView
     private lateinit var cameraExecutor: ExecutorService
+
+    // Single ML Kit client instance reused across frames
+    private val barcodeScanner = BarcodeScanning.getClient()
 
     @Volatile private var scanned = false
 
@@ -32,6 +35,7 @@ class QrScannerActivity : AppCompatActivity() {
         startCamera()
     }
 
+    @androidx.annotation.OptIn(ExperimentalGetImage::class)
     private fun startCamera() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
@@ -56,8 +60,7 @@ class QrScannerActivity : AppCompatActivity() {
                     imageProxy.imageInfo.rotationDegrees
                 )
 
-                BarcodeScanning.getClient()
-                    .process(image)
+                barcodeScanner.process(image)
                     .addOnSuccessListener { barcodes ->
                         barcodes.firstOrNull { it.rawValue != null }
                             ?.rawValue
@@ -95,6 +98,7 @@ class QrScannerActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         cameraExecutor.shutdown()
+        barcodeScanner.close()
     }
 
     companion object {
