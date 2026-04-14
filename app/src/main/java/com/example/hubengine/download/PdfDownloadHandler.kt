@@ -15,6 +15,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.FileProvider
 import com.example.hubengine.R
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
 
 class PdfDownloadHandler(private val context: Context) {
 
@@ -22,6 +23,8 @@ class PdfDownloadHandler(private val context: Context) {
         context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
     private val notificationManager =
         context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+    private var downloadReceiver: BroadcastReceiver? = null
 
     init {
         createNotificationChannel()
@@ -37,6 +40,11 @@ class PdfDownloadHandler(private val context: Context) {
             .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "HubEngine/$fileName")
             .setMimeType("application/pdf")
         downloadManager.enqueue(request)
+    }
+
+    fun unregister() {
+        downloadReceiver?.let { context.unregisterReceiver(it) }
+        downloadReceiver = null
     }
 
     private fun createNotificationChannel() {
@@ -57,6 +65,7 @@ class PdfDownloadHandler(private val context: Context) {
                 if (id != -1L) notifyDownloadComplete(id)
             }
         }
+        downloadReceiver = receiver
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context.registerReceiver(
                 receiver,
@@ -75,11 +84,15 @@ class PdfDownloadHandler(private val context: Context) {
         if (cursor.moveToFirst()) {
             val statusCol = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
             val localUriCol = cursor.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI)
+            if (statusCol < 0 || localUriCol < 0) {
+                cursor.close()
+                return
+            }
             if (cursor.getInt(statusCol) == DownloadManager.STATUS_SUCCESSFUL) {
                 cursor.getString(localUriCol)?.let { localUri ->
                     showOpenNotification(localUri)
                 }
-        }
+            }
         }
         cursor.close()
     }
@@ -96,8 +109,9 @@ class PdfDownloadHandler(private val context: Context) {
             setDataAndType(contentUri, "application/pdf")
             flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK
         }
+        val id = notificationCounter.getAndIncrement()
         val pendingIntent = PendingIntent.getActivity(
-            context, notificationCounter,
+            context, id,
             openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -108,12 +122,12 @@ class PdfDownloadHandler(private val context: Context) {
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
             .build()
-        notificationManager.notify(notificationCounter++, notification)
+        notificationManager.notify(id, notification)
     }
 
     companion object {
         private const val CHANNEL_ID = "hubengine_downloads"
-        private var notificationCounter = 2000
+        private val notificationCounter = AtomicInteger(2000)
 
         fun isPdfUrl(url: String): Boolean =
             url.lowercase().let { it.endsWith(".pdf") || it.contains(".pdf?") }
