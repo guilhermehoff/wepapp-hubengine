@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.View
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -91,17 +92,17 @@ class MainActivity : AppCompatActivity() {
                     pdfHandler.download(url)
                     return true
                 }
-                view.loadUrl(url)
-                return true
+                // Return false so WebView handles the URL natively (preserves method/headers)
+                return false
             }
 
             override fun onReceivedError(
                 view: WebView,
-                errorCode: Int,
-                description: String,
-                failingUrl: String
+                request: WebResourceRequest,
+                error: WebResourceError
             ) {
-                showOfflineScreen()
+                // Only show offline screen for main frame errors, not sub-resources
+                if (request.isForMainFrame) showOfflineScreen()
             }
         }
 
