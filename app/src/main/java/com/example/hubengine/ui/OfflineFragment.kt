@@ -19,6 +19,7 @@ class OfflineFragment : Fragment() {
     ): View = inflater.inflate(R.layout.fragment_offline, container, false)
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
         view.findViewById<Button>(R.id.btn_retry).setOnClickListener {
             onRetry?.invoke()
         }
