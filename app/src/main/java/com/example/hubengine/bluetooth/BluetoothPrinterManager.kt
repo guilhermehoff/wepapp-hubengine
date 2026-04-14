@@ -37,8 +37,9 @@ class BluetoothPrinterManager(private val context: Context) : PrinterPort {
 
     override fun send(data: ByteArray): Boolean =
         try {
-            socket?.outputStream?.write(data)
-            socket?.outputStream?.flush()
+            val out = socket?.outputStream ?: return false
+            out.write(data)
+            out.flush()
             true
         } catch (e: IOException) {
             false
