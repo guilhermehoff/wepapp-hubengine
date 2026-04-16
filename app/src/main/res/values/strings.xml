@@ -6,4 +6,8 @@
     <string name="pdf_downloading">Baixando PDF…</string>
     <string name="pdf_downloaded">PDF baixado</string>
     <string name="pdf_open">Abrir</string>
+    <string name="setup_subtitle">Configure a URL do sistema</string>
+    <string name="setup_url_hint">https://exemplo.com.br/</string>
+    <string name="setup_confirm">Confirmar</string>
+    <string name="setup_url_error">URL inválida. Use http:// ou https://</string>
 </resources>

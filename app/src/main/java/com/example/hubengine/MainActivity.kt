@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.webkit.WebResourceError
@@ -15,10 +16,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.example.hubengine.bluetooth.BluetoothPrinterManager
+import com.example.hubengine.bluetooth.PrintBridge
 import com.example.hubengine.bluetooth.PrinterBridge
 import com.example.hubengine.camera.QrScannerActivity
 import com.example.hubengine.download.PdfDownloadHandler
 import com.example.hubengine.ui.OfflineFragment
+import com.example.hubengine.ui.SetupFragment
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 
 class MainActivity : AppCompatActivity() {
@@ -31,6 +34,10 @@ class MainActivity : AppCompatActivity() {
     private val cameraPermLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted -> if (granted) openQrScanner() }
+
+    private val bluetoothPermLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* permissão concedida ou negada — PrintBridge lida com SecurityException */ }
 
     private val qrScannerLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -52,6 +59,14 @@ class MainActivity : AppCompatActivity() {
 
         setupWebView()
         setupFab()
+        requestBluetoothPermissionIfNeeded()
+
+        val savedUrl = getSavedUrl()
+        if (savedUrl != null) {
+            webView.loadUrl(savedUrl)
+        } else {
+            showSetupScreen()
+        }
     }
 
     private fun enterKioskMode() {
@@ -81,6 +96,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.addJavascriptInterface(PrinterBridge(printerManager), "Android")
+        webView.addJavascriptInterface(PrintBridge(webView), "AndroidPrint")
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(
@@ -112,12 +128,16 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        webView.loadUrl(PDV_URL)
     }
 
     private fun setupFab() {
         fab = findViewById(R.id.fab_qr_scan)
         fab.setOnClickListener { requestCameraAndScan() }
+        fab.setOnLongClickListener {
+            clearSavedUrl()
+            showSetupScreen()
+            true
+        }
     }
 
     private fun requestCameraAndScan() {
@@ -158,6 +178,42 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    private fun requestBluetoothPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
+                != PackageManager.PERMISSION_GRANTED
+        ) {
+            bluetoothPermLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
+        }
+    }
+
+    private fun getSavedUrl(): String? =
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(KEY_URL, null)
+
+    private fun saveUrl(url: String) =
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putString(KEY_URL, url).apply()
+
+    private fun clearSavedUrl() =
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().remove(KEY_URL).apply()
+
+    private fun showSetupScreen() {
+        fab.visibility = View.GONE
+        supportFragmentManager.beginTransaction()
+            .replace(
+                R.id.fragment_container,
+                SetupFragment.newInstance { url ->
+                    saveUrl(url)
+                    supportFragmentManager.findFragmentByTag(SetupFragment.TAG)?.let {
+                        supportFragmentManager.beginTransaction().remove(it).commit()
+                    }
+                    fab.visibility = View.VISIBLE
+                    webView.loadUrl(url)
+                },
+                SetupFragment.TAG
+            )
+            .commit()
+    }
+
     private fun showOfflineScreen() {
         if (supportFragmentManager.findFragmentByTag(OfflineFragment.TAG) != null) return
         supportFragmentManager.beginTransaction()
@@ -189,6 +245,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
-        const val PDV_URL = "https://pdv.premiumtrip.com.br/"
+        private const val PREFS_NAME = "hub_engine_prefs"
+        private const val KEY_URL = "pdv_url"
     }
 }
