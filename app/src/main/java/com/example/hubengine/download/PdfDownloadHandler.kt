@@ -11,6 +11,7 @@ import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.webkit.CookieManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.FileProvider
 import com.example.hubengine.R
@@ -33,12 +34,16 @@ class PdfDownloadHandler(private val context: Context) {
 
     fun download(url: String) {
         val fileName = fileNameFromUrl(url)
+        val cookies = CookieManager.getInstance().getCookie(url)
         val request = DownloadManager.Request(Uri.parse(url))
             .setTitle(fileName)
             .setDescription(context.getString(R.string.pdf_downloading))
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
             .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "HubEngine/$fileName")
             .setMimeType("application/pdf")
+        if (!cookies.isNullOrEmpty()) {
+            request.addRequestHeader("Cookie", cookies)
+        }
         downloadManager.enqueue(request)
     }
 
