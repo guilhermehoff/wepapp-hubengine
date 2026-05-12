@@ -1,5 +1,12 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
+}
+
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) load(f.inputStream())
 }
 
 android {
@@ -10,8 +17,17 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = file(localProps["STORE_FILE"] as String)
+            storePassword = localProps["STORE_PASSWORD"] as String
+            keyAlias = localProps["KEY_ALIAS"] as String
+            keyPassword = localProps["KEY_PASSWORD"] as String
+        }
+    }
+
     defaultConfig {
-        applicationId = "com.example.hubengine"
+        applicationId = "br.com.hubengine"
         minSdk = 26
         targetSdk = 36
         versionCode = 1
@@ -21,18 +37,46 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
         }
+        debug {
+            applicationIdSuffix = ".debug"
+        }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
 
+}
+
+val desktop = "${System.getProperty("user.home")}/Desktop"
+
+afterEvaluate {
+    tasks.named("assembleDebug") {
+        doLast {
+            copy {
+                from("${layout.buildDirectory.get()}/outputs/apk/debug/app-debug.apk")
+                into(desktop)
+                rename { "HubEngine.apk" }
+            }
+        }
+    }
+    tasks.named("assembleRelease") {
+        doLast {
+            copy {
+                from("${layout.buildDirectory.get()}/outputs/apk/release/app-release.apk")
+                into(desktop)
+                rename { "HubEngine-release.apk" }
+            }
+        }
+    }
 }
 
 dependencies {

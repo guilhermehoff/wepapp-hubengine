@@ -239,7 +239,7 @@ public class PrintBridge {
 
         // --- QR Code ---
         buf.write(new byte[]{0x1B, 0x61, 0x01});
-        buf.write("LEIA NA ENTRADA\n".getBytes(StandardCharsets.UTF_8));
+        buf.write("LEIA NA ENTRADA\n\n".getBytes(StandardCharsets.UTF_8));
         buf.write(buildQrCode(loc));
         buf.write("\n".getBytes(StandardCharsets.UTF_8));
         buf.write(new byte[]{0x1B, 0x21, 0x10});
@@ -252,8 +252,14 @@ public class PrintBridge {
         buf.write(("Pedido:    " + orderLoc + "\n").getBytes(StandardCharsets.UTF_8));
         buf.write(("Comprador: " + buyerName + "\n").getBytes(StandardCharsets.UTF_8));
 
-        // Avanço + corte
-        buf.write(new byte[]{0x0A, 0x0A, 0x0A, 0x0A});
+        // --- Powered by ---
+        buf.write("\n".getBytes(StandardCharsets.UTF_8)); // espaço entre comprador e powered by
+        buf.write(new byte[]{0x1B, 0x61, 0x01}); // centralizar
+        buf.write(new byte[]{0x1B, 0x21, 0x00}); // fonte normal
+        buf.write("Powered by Hub Engine\n".getBytes(StandardCharsets.UTF_8));
+
+        // Avanço reduzido + corte
+        buf.write(new byte[]{0x0A, 0x0A});
         buf.write(new byte[]{0x1D, 0x56, 0x41, 0x0A});
 
         return buf.toByteArray();
