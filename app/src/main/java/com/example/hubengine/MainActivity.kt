@@ -5,10 +5,14 @@ import android.app.Activity
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
 import android.view.View
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -26,6 +30,7 @@ import com.example.hubengine.bluetooth.PrintBridge
 import com.example.hubengine.bluetooth.PrinterBridge
 import com.example.hubengine.camera.QrScannerActivity
 import com.example.hubengine.download.PdfDownloadHandler
+import com.example.hubengine.print.BluetoothPrintServer
 import com.example.hubengine.ui.OfflineFragment
 import com.example.hubengine.ui.SetupFragment
 import com.google.android.material.floatingactionbutton.FloatingActionButton
@@ -36,8 +41,24 @@ class MainActivity : AppCompatActivity() {
     private lateinit var fab: FloatingActionButton
     private lateinit var printerManager: BluetoothPrinterManager
     private lateinit var pdfHandler: PdfDownloadHandler
+    private lateinit var printServer: BluetoothPrintServer
     private val notifManager by lazy {
         getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+    }
+
+    private var currentUrl: String = ""
+
+    // Buffer para capturar caracteres do scanner em modo teclado (HID)
+    private val scanKeyBuffer = StringBuilder()
+
+    private val scannerReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val barcode = intent.getStringExtra("EXTRA_BARCODE_DECODING_DATA") ?: return
+            if (currentUrl.contains("hub-pass/validar")) {
+                scanKeyBuffer.clear()
+                injectQrIntoWebView(barcode)
+            }
+        }
     }
 
     private val cameraPermLauncher = registerForActivityResult(
@@ -69,6 +90,8 @@ class MainActivity : AppCompatActivity() {
 
         printerManager = BluetoothPrinterManager(this)
         pdfHandler = PdfDownloadHandler(this)
+        printServer = BluetoothPrintServer(this)
+        printServer.start()
 
         setupReturnNotificationChannel()
         setupWebView()
@@ -114,6 +137,16 @@ class MainActivity : AppCompatActivity() {
         webView.addJavascriptInterface(PrintBridge(webView), "AndroidPrint")
 
         webView.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView, url: String) {
+                super.onPageFinished(view, url)
+                val wasOnValidate = currentUrl.contains("hub-pass/validar")
+                val isOnValidate  = url.contains("hub-pass/validar")
+                currentUrl = url
+                fab.visibility = if (isOnValidate) View.VISIBLE else View.GONE
+                if (isOnValidate && !wasOnValidate) activateScanner()
+                else if (!isOnValidate && wasOnValidate) deactivateScanner()
+            }
+
             override fun shouldOverrideUrlLoading(
                 view: WebView,
                 request: WebResourceRequest
@@ -166,6 +199,40 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun activateScanner() {
+        // START_SERVICE garante que o daemon do scanner está rodando.
+        // OPEN_SCAN_BROADCAST (loop contínuo) foi removido — causava ANR/freeze.
+        sendBroadcast(Intent("com.xcheng.scanner.action.START_SERVICE"))
+    }
+
+    private fun deactivateScanner() {
+        scanKeyBuffer.clear()
+    }
+
+    // Fallback: scanner em modo teclado (HID) — intercepta teclas antes do WebView
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (currentUrl.contains("hub-pass/validar") && event.action == KeyEvent.ACTION_DOWN) {
+            return when (event.keyCode) {
+                KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                    val code = scanKeyBuffer.toString().trim()
+                    scanKeyBuffer.clear()
+                    if (code.isNotEmpty()) injectQrIntoWebView(code)
+                    true
+                }
+                else -> {
+                    val ch = event.getUnicodeChar(event.metaState)
+                    if (ch > 0) {
+                        scanKeyBuffer.append(ch.toChar())
+                        true
+                    } else {
+                        super.dispatchKeyEvent(event)
+                    }
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     private fun requestCameraAndScan() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
             == PackageManager.PERMISSION_GRANTED
@@ -193,11 +260,12 @@ class MainActivity : AppCompatActivity() {
             """
             (function() {
                 var el = document.activeElement;
-                if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
-                    el.value = '$escaped';
-                    el.dispatchEvent(new Event('input', { bubbles: true }));
-                    el.dispatchEvent(new Event('change', { bubbles: true }));
-                }
+                if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) return;
+                var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                nativeInputValueSetter.call(el, '$escaped');
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
             })();
             """.trimIndent(),
             null
@@ -207,11 +275,22 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         showReturnNotification()
+        try { unregisterReceiver(scannerReceiver) } catch (_: Exception) {}
     }
 
     override fun onResume() {
         super.onResume()
         notifManager.cancel(RETURN_NOTIF_ID)
+        val filter = IntentFilter().apply {
+            addAction("com.xcheng.scanner.action.BARCODE_DECODING_BROADCAST")
+            addAction("com.xcheng.scanner.action.BARCODE_DECODING_BROADCAST_INPUT")
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(scannerReceiver, filter, RECEIVER_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(scannerReceiver, filter)
+        }
     }
 
     private fun setupReturnNotificationChannel() {
@@ -287,7 +366,6 @@ class MainActivity : AppCompatActivity() {
                     supportFragmentManager.findFragmentByTag(SetupFragment.TAG)?.let {
                         supportFragmentManager.beginTransaction().remove(it).commit()
                     }
-                    fab.visibility = View.VISIBLE
                     webView.loadUrl(url)
                 },
                 SetupFragment.TAG
@@ -321,13 +399,14 @@ class MainActivity : AppCompatActivity() {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         if (webView.canGoBack()) webView.goBack()
-        else super.onBackPressed()
+        // No PDV kiosk: block back navigation when at root to prevent leaving the app
     }
 
     override fun onDestroy() {
         super.onDestroy()
         printerManager.disconnect()
         pdfHandler.unregister()
+        printServer.stop()
     }
 
     companion object {

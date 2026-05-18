@@ -90,9 +90,20 @@ public class PrintBridge {
                 for (int i = 0; i < tickets.length(); i++) {
                     JSONObject t = tickets.getJSONObject(i);
                     byte[] receipt = buildReceipt(t, logoBytes, companyName);
+
+                    // Envia conteúdo do ingresso (sem corte embutido)
                     out.write(receipt);
                     out.flush();
-                    Thread.sleep(300);
+
+                    // Aguarda a impressora terminar de imprimir todo o conteúdo (bitmap QR incluso)
+                    Thread.sleep(2500);
+
+                    // Envia corte separadamente — garantia de que chega após o conteúdo ser processado
+                    out.write(new byte[]{0x1D, 0x56, 0x01}); // GS V 1: corte parcial
+                    out.flush();
+
+                    // Aguarda o corte físico executar antes do próximo ingresso
+                    Thread.sleep(800);
                 }
 
                 out.close();
@@ -105,6 +116,124 @@ public class PrintBridge {
                 returnResult(false, "Erro: " + msg);
             }
         }).start();
+    }
+
+    // -------------------------------------------------------------------------
+    // AEB receipt
+    // -------------------------------------------------------------------------
+
+    @JavascriptInterface
+    @SuppressLint("MissingPermission")
+    public void printAeb(String json) {
+        new Thread(() -> {
+            try {
+                JSONObject root    = new JSONObject(json);
+                String company     = root.isNull("company") ? "" : root.getString("company");
+                String logoBase64  = root.isNull("logo")    ? null : root.getString("logo");
+                String orderCode   = root.optString("orderCode", "");
+                JSONArray  items   = root.getJSONArray("items");
+                double     total   = root.getDouble("total");
+
+                BluetoothManager bm =
+                        (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
+                BluetoothAdapter adapter = bm != null ? bm.getAdapter() : null;
+                if (adapter == null || !adapter.isEnabled()) {
+                    returnResult(false, "Bluetooth desativado.");
+                    return;
+                }
+
+                BluetoothDevice printer = findPrinter(adapter);
+                if (printer == null) {
+                    returnResult(false, "Nenhuma impressora pareada.");
+                    return;
+                }
+
+                byte[] logoBytes = (logoBase64 != null && !logoBase64.isEmpty())
+                        ? buildLogoBytes(logoBase64) : null;
+
+                byte[] receipt = buildAebReceipt(company, logoBytes, orderCode, items, total);
+
+                BluetoothSocket socket = connectSocket(printer);
+                OutputStream out = socket.getOutputStream();
+                out.write(receipt);
+                out.flush();
+                Thread.sleep(1500);
+                out.write(new byte[]{0x1D, 0x56, 0x01}); // corte parcial
+                out.flush();
+                Thread.sleep(800);
+                out.close();
+                socket.close();
+                returnResult(true, "OK");
+
+            } catch (Exception e) {
+                String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+                returnResult(false, "Erro: " + msg);
+            }
+        }).start();
+    }
+
+    private byte[] buildAebReceipt(String company, byte[] logoBytes,
+                                    String orderCode, JSONArray items, double total) throws Exception {
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+
+        // --- Logo ou nome da empresa ---
+        if (logoBytes != null && logoBytes.length > 0) {
+            buf.write(logoBytes);
+        } else if (!company.isEmpty()) {
+            buf.write(new byte[]{0x1B, 0x61, 0x01}); // center
+            buf.write(new byte[]{0x1B, 0x21, 0x38}); // double height+width
+            buf.write((company + "\n").getBytes(StandardCharsets.UTF_8));
+            buf.write(new byte[]{0x1B, 0x21, 0x00}); // normal
+        }
+
+        buf.write(new byte[]{0x1B, 0x61, 0x01}); // center
+        buf.write("================================\n".getBytes(StandardCharsets.UTF_8));
+
+        // --- Pedido ---
+        buf.write(new byte[]{0x1B, 0x61, 0x00}); // left
+        buf.write(("Pedido: " + orderCode + "\n").getBytes(StandardCharsets.UTF_8));
+        buf.write("--------------------------------\n".getBytes(StandardCharsets.UTF_8));
+
+        // --- Itens ---
+        for (int i = 0; i < items.length(); i++) {
+            JSONObject item = items.getJSONObject(i);
+            int    qty   = item.getInt("quantity");
+            String name  = item.getString("name");
+            double price = item.getDouble("total_price");
+
+            String namePart = qty + "x " + name;
+            if (namePart.length() > 22) namePart = namePart.substring(0, 22);
+            String priceStr = "R$" + String.format("%.2f", price).replace('.', ',');
+            buf.write(String.format("%-22s%s\n", namePart, priceStr)
+                    .getBytes(StandardCharsets.UTF_8));
+        }
+
+        // --- Total ---
+        buf.write("--------------------------------\n".getBytes(StandardCharsets.UTF_8));
+        buf.write(new byte[]{0x1B, 0x45, 0x01}); // bold
+        String totalStr = "R$ " + String.format("%.2f", total).replace('.', ',');
+        buf.write(String.format("%-22s%s\n", "TOTAL:", totalStr)
+                .getBytes(StandardCharsets.UTF_8));
+        buf.write(new byte[]{0x1B, 0x45, 0x00}); // normal
+        buf.write("================================\n".getBytes(StandardCharsets.UTF_8));
+
+        // --- QR Code com código do pedido ---
+        buf.write(new byte[]{0x1B, 0x61, 0x01}); // center
+        buf.write("\n".getBytes(StandardCharsets.UTF_8));
+        buf.write(buildQrBitmap(orderCode));
+        buf.write(new byte[]{0x1B, 0x21, 0x10}); // double width
+        buf.write((orderCode + "\n").getBytes(StandardCharsets.UTF_8));
+        buf.write(new byte[]{0x1B, 0x21, 0x00}); // normal
+
+        // --- Powered by ---
+        buf.write("\n".getBytes(StandardCharsets.UTF_8));
+        buf.write(new byte[]{0x1B, 0x61, 0x01}); // center
+        buf.write("Powered by Hub Engine\n".getBytes(StandardCharsets.UTF_8));
+
+        // Feed (corte enviado separadamente no caller)
+        buf.write(new byte[]{0x1B, 0x64, 0x04}); // avança 4 linhas
+
+        return buf.toByteArray();
     }
 
     // -------------------------------------------------------------------------
@@ -198,9 +327,6 @@ public class PrintBridge {
 
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
 
-        // Reset
-        buf.write(new byte[]{0x1B, 0x40});
-
         // --- Header: logo ou nome da empresa ---
         if (logoBytes != null && logoBytes.length > 0) {
             buf.write(logoBytes);
@@ -237,10 +363,10 @@ public class PrintBridge {
         }
         buf.write(dashedLine());
 
-        // --- QR Code ---
+        // --- QR Code (bitmap raster — compatível com qualquer impressora ESC/POS) ---
         buf.write(new byte[]{0x1B, 0x61, 0x01});
         buf.write("LEIA NA ENTRADA\n\n".getBytes(StandardCharsets.UTF_8));
-        buf.write(buildQrCode(loc));
+        buf.write(buildQrBitmap(loc));
         buf.write("\n".getBytes(StandardCharsets.UTF_8));
         buf.write(new byte[]{0x1B, 0x21, 0x10});
         buf.write((loc + "\n").getBytes(StandardCharsets.UTF_8));
@@ -258,9 +384,8 @@ public class PrintBridge {
         buf.write(new byte[]{0x1B, 0x21, 0x00}); // fonte normal
         buf.write("Powered by Hub Engine\n".getBytes(StandardCharsets.UTF_8));
 
-        // Avanço reduzido + corte
-        buf.write(new byte[]{0x0A, 0x0A});
-        buf.write(new byte[]{0x1D, 0x56, 0x41, 0x0A});
+        // Feed antes do corte (corte é enviado separadamente no loop)
+        buf.write(new byte[]{0x1B, 0x64, 0x05}); // ESC d 5: avança 5 linhas
 
         return buf.toByteArray();
     }
@@ -276,7 +401,7 @@ public class PrintBridge {
 
         for (BluetoothDevice d : paired) {
             String name = d.getName() != null ? d.getName().toUpperCase() : "";
-            if (name.contains("ELEPH") || name.contains("LABEL")
+            if (name.contains("INNER") || name.contains("ELEPH") || name.contains("LABEL")
                     || name.contains("KAPBOM") || name.contains("KA")
                     || name.contains("PRINT") || name.contains("POS")
                     || name.contains("THERMAL") || name.contains("RPP")
@@ -310,22 +435,55 @@ public class PrintBridge {
     // ESC/POS helpers
     // -------------------------------------------------------------------------
 
-    private byte[] buildQrCode(String content) throws Exception {
-        ByteArrayOutputStream q = new ByteArrayOutputStream();
-        byte[] data = content.getBytes(StandardCharsets.US_ASCII);
+    /**
+     * Gera QR code como bitmap raster (GS v 0), compatível com impressoras que
+     * não implementam os comandos nativos GS ( k.
+     */
+    private byte[] buildQrBitmap(String content) {
+        try {
+            int size = 240; // dots — cabe bem em 58mm e 80mm
+            com.google.zxing.MultiFormatWriter writer = new com.google.zxing.MultiFormatWriter();
+            com.google.zxing.common.BitMatrix matrix = writer.encode(
+                    content,
+                    com.google.zxing.BarcodeFormat.QR_CODE,
+                    size, size
+            );
 
-        q.write(new byte[]{0x1D, 0x28, 0x6B, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00});
-        q.write(new byte[]{0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x43, 0x08});
-        q.write(new byte[]{0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x45, 0x30});
+            int width       = matrix.getWidth();
+            int height      = matrix.getHeight();
+            int bytesPerRow = (width + 7) / 8;
 
-        int len = data.length + 3;
-        byte pl = (byte) (len & 0xFF);
-        byte ph = (byte) ((len >> 8) & 0xFF);
-        q.write(new byte[]{0x1D, 0x28, 0x6B, pl, ph, 0x31, 0x50, 0x30});
-        q.write(data);
-        q.write(new byte[]{0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x51, 0x30});
+            ByteArrayOutputStream buf = new ByteArrayOutputStream();
 
-        return q.toByteArray();
+            // Centraliza
+            buf.write(new byte[]{0x1B, 0x61, 0x01});
+
+            // GS v 0 — raster bit image (mesmo comando usado na logo)
+            buf.write(new byte[]{0x1D, 0x76, 0x30, 0x00});
+            buf.write((byte) (bytesPerRow & 0xFF));
+            buf.write((byte) ((bytesPerRow >> 8) & 0xFF));
+            buf.write((byte) (height & 0xFF));
+            buf.write((byte) ((height >> 8) & 0xFF));
+
+            for (int y = 0; y < height; y++) {
+                for (int xByte = 0; xByte < bytesPerRow; xByte++) {
+                    int b = 0;
+                    for (int bit = 0; bit < 8; bit++) {
+                        int x = xByte * 8 + bit;
+                        if (x < width && matrix.get(x, y)) {
+                            b |= (0x80 >> bit);
+                        }
+                    }
+                    buf.write(b);
+                }
+            }
+
+            buf.write('\n');
+            return buf.toByteArray();
+
+        } catch (Exception e) {
+            return new byte[0];
+        }
     }
 
     private byte[] dashedLine() {
