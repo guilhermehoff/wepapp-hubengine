@@ -67,13 +67,13 @@ public class PrintBridge {
                 BluetoothAdapter adapter = bm != null ? bm.getAdapter() : null;
 
                 if (adapter == null || !adapter.isEnabled()) {
-                    returnResult(false, "Bluetooth desativado.");
+                    returnFallback("Bluetooth desativado");
                     return;
                 }
 
                 BluetoothDevice printer = findPrinter(adapter);
                 if (printer == null) {
-                    returnResult(false, "Nenhuma impressora pareada encontrada.");
+                    returnFallback("Sem impressora pareada");
                     return;
                 }
 
@@ -138,13 +138,13 @@ public class PrintBridge {
                         (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
                 BluetoothAdapter adapter = bm != null ? bm.getAdapter() : null;
                 if (adapter == null || !adapter.isEnabled()) {
-                    returnResult(false, "Bluetooth desativado.");
+                    returnFallback("Bluetooth desativado");
                     return;
                 }
 
                 BluetoothDevice printer = findPrinter(adapter);
                 if (printer == null) {
-                    returnResult(false, "Nenhuma impressora pareada.");
+                    returnFallback("Sem impressora pareada");
                     return;
                 }
 
@@ -175,6 +175,10 @@ public class PrintBridge {
     private byte[] buildAebReceipt(String company, byte[] logoBytes,
                                     String orderCode, JSONArray items, double total) throws Exception {
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        java.nio.charset.Charset cs = StandardCharsets.ISO_8859_1;
+
+        // ESC t 16 = WPC1252 — suporte a acentuação PT-BR
+        buf.write(new byte[]{0x1B, 0x74, 0x10});
 
         // --- Logo ou nome da empresa ---
         if (logoBytes != null && logoBytes.length > 0) {
@@ -182,17 +186,16 @@ public class PrintBridge {
         } else if (!company.isEmpty()) {
             buf.write(new byte[]{0x1B, 0x61, 0x01}); // center
             buf.write(new byte[]{0x1B, 0x21, 0x38}); // double height+width
-            buf.write((company + "\n").getBytes(StandardCharsets.UTF_8));
+            buf.write((company + "\n").getBytes(cs));
             buf.write(new byte[]{0x1B, 0x21, 0x00}); // normal
         }
 
-        buf.write(new byte[]{0x1B, 0x61, 0x01}); // center
-        buf.write("================================\n".getBytes(StandardCharsets.UTF_8));
+        buf.write(new byte[]{0x1B, 0x61, 0x01}); // center — mantém até o fim
+        buf.write("================================\n".getBytes(cs));
 
         // --- Pedido ---
-        buf.write(new byte[]{0x1B, 0x61, 0x00}); // left
-        buf.write(("Pedido: " + orderCode + "\n").getBytes(StandardCharsets.UTF_8));
-        buf.write("--------------------------------\n".getBytes(StandardCharsets.UTF_8));
+        buf.write(("Pedido: " + orderCode + "\n").getBytes(cs));
+        buf.write("--------------------------------\n".getBytes(cs));
 
         // --- Itens ---
         for (int i = 0; i < items.length(); i++) {
@@ -204,31 +207,27 @@ public class PrintBridge {
             String namePart = qty + "x " + name;
             if (namePart.length() > 22) namePart = namePart.substring(0, 22);
             String priceStr = "R$" + String.format("%.2f", price).replace('.', ',');
-            buf.write(String.format("%-22s%s\n", namePart, priceStr)
-                    .getBytes(StandardCharsets.UTF_8));
+            buf.write(String.format("%-22s%s\n", namePart, priceStr).getBytes(cs));
         }
 
         // --- Total ---
-        buf.write("--------------------------------\n".getBytes(StandardCharsets.UTF_8));
+        buf.write("--------------------------------\n".getBytes(cs));
         buf.write(new byte[]{0x1B, 0x45, 0x01}); // bold
         String totalStr = "R$ " + String.format("%.2f", total).replace('.', ',');
-        buf.write(String.format("%-22s%s\n", "TOTAL:", totalStr)
-                .getBytes(StandardCharsets.UTF_8));
+        buf.write(String.format("%-22s%s\n", "TOTAL:", totalStr).getBytes(cs));
         buf.write(new byte[]{0x1B, 0x45, 0x00}); // normal
-        buf.write("================================\n".getBytes(StandardCharsets.UTF_8));
+        buf.write("================================\n".getBytes(cs));
 
         // --- QR Code com código do pedido ---
-        buf.write(new byte[]{0x1B, 0x61, 0x01}); // center
-        buf.write("\n".getBytes(StandardCharsets.UTF_8));
+        buf.write("\n".getBytes(cs));
         buf.write(buildQrBitmap(orderCode));
         buf.write(new byte[]{0x1B, 0x21, 0x10}); // double width
-        buf.write((orderCode + "\n").getBytes(StandardCharsets.UTF_8));
+        buf.write((orderCode + "\n").getBytes(cs));
         buf.write(new byte[]{0x1B, 0x21, 0x00}); // normal
 
         // --- Powered by ---
-        buf.write("\n".getBytes(StandardCharsets.UTF_8));
-        buf.write(new byte[]{0x1B, 0x61, 0x01}); // center
-        buf.write("Powered by Hub Engine\n".getBytes(StandardCharsets.UTF_8));
+        buf.write("\n".getBytes(cs));
+        buf.write("Powered by Hub Engine\n".getBytes(cs));
 
         // Feed (corte enviado separadamente no caller)
         buf.write(new byte[]{0x1B, 0x64, 0x04}); // avança 4 linhas
@@ -326,6 +325,10 @@ public class PrintBridge {
         String buyerName   = t.getString("buyer_name");
 
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        java.nio.charset.Charset cs = StandardCharsets.ISO_8859_1;
+
+        // ESC t 16 = WPC1252 — suporte a acentuação PT-BR
+        buf.write(new byte[]{0x1B, 0x74, 0x10});
 
         // --- Header: logo ou nome da empresa ---
         if (logoBytes != null && logoBytes.length > 0) {
@@ -335,54 +338,54 @@ public class PrintBridge {
             String header = (companyName != null && !companyName.isEmpty()) ? companyName : "PDV";
             buf.write(new byte[]{0x1B, 0x61, 0x01});
             buf.write(new byte[]{0x1B, 0x21, 0x38});
-            buf.write((header + "\n").getBytes(StandardCharsets.UTF_8));
+            buf.write((header + "\n").getBytes(cs));
             buf.write(new byte[]{0x1B, 0x21, 0x00});
         }
 
         buf.write(new byte[]{0x1B, 0x61, 0x01});
-        buf.write(("Ingresso " + index + " / " + total + "\n").getBytes(StandardCharsets.UTF_8));
+        buf.write(("Ingresso " + index + " / " + total + "\n").getBytes(cs));
         buf.write(dashedLine());
 
         // --- Portador ---
         buf.write(new byte[]{0x1B, 0x61, 0x00});
-        buf.write("PORTADOR\n".getBytes(StandardCharsets.UTF_8));
+        buf.write("PORTADOR\n".getBytes(cs));
         buf.write(new byte[]{0x1B, 0x45, 0x01});
-        buf.write((carrier + "\n").getBytes(StandardCharsets.UTF_8));
+        buf.write((carrier + "\n").getBytes(cs));
         buf.write(new byte[]{0x1B, 0x45, 0x00});
         buf.write(dashedLine());
 
         // --- Produto ---
-        buf.write("PRODUTO\n".getBytes(StandardCharsets.UTF_8));
+        buf.write("PRODUTO\n".getBytes(cs));
         buf.write(new byte[]{0x1B, 0x45, 0x01});
-        buf.write((productName + "\n").getBytes(StandardCharsets.UTF_8));
+        buf.write((productName + "\n").getBytes(cs));
         buf.write(new byte[]{0x1B, 0x45, 0x00});
-        buf.write(("Tipo: " + typeName + " - " + dscType + "\n").getBytes(StandardCharsets.UTF_8));
-        buf.write(("Data: " + date + "\n").getBytes(StandardCharsets.UTF_8));
+        buf.write(("Tipo: " + typeName + " - " + dscType + "\n").getBytes(cs));
+        buf.write(("Data: " + date + "\n").getBytes(cs));
         if (time != null) {
-            buf.write(("Hora: " + time + "\n").getBytes(StandardCharsets.UTF_8));
+            buf.write(("Hora: " + time + "\n").getBytes(cs));
         }
         buf.write(dashedLine());
 
         // --- QR Code (bitmap raster — compatível com qualquer impressora ESC/POS) ---
         buf.write(new byte[]{0x1B, 0x61, 0x01});
-        buf.write("LEIA NA ENTRADA\n\n".getBytes(StandardCharsets.UTF_8));
+        buf.write("LEIA NA ENTRADA\n\n".getBytes(cs));
         buf.write(buildQrBitmap(loc));
-        buf.write("\n".getBytes(StandardCharsets.UTF_8));
+        buf.write("\n".getBytes(cs));
         buf.write(new byte[]{0x1B, 0x21, 0x10});
-        buf.write((loc + "\n").getBytes(StandardCharsets.UTF_8));
+        buf.write((loc + "\n").getBytes(cs));
         buf.write(new byte[]{0x1B, 0x21, 0x00});
         buf.write(dashedLine());
 
         // --- Rodapé ---
         buf.write(new byte[]{0x1B, 0x61, 0x00});
-        buf.write(("Pedido:    " + orderLoc + "\n").getBytes(StandardCharsets.UTF_8));
-        buf.write(("Comprador: " + buyerName + "\n").getBytes(StandardCharsets.UTF_8));
+        buf.write(("Pedido:    " + orderLoc + "\n").getBytes(cs));
+        buf.write(("Comprador: " + buyerName + "\n").getBytes(cs));
 
         // --- Powered by ---
-        buf.write("\n".getBytes(StandardCharsets.UTF_8)); // espaço entre comprador e powered by
+        buf.write("\n".getBytes(cs));
         buf.write(new byte[]{0x1B, 0x61, 0x01}); // centralizar
         buf.write(new byte[]{0x1B, 0x21, 0x00}); // fonte normal
-        buf.write("Powered by Hub Engine\n".getBytes(StandardCharsets.UTF_8));
+        buf.write("Powered by Hub Engine\n".getBytes(cs));
 
         // Feed antes do corte (corte é enviado separadamente no loop)
         buf.write(new byte[]{0x1B, 0x64, 0x05}); // ESC d 5: avança 5 linhas
@@ -501,6 +504,18 @@ public class PrintBridge {
     private void returnResult(boolean ok, String message) {
         String safeMsg = message.replace("'", "\\'");
         String js = "window.onPrintResult(" + (ok ? "true" : "false") + ", '" + safeMsg + "');";
+        webView.post(() -> webView.evaluateJavascript(js, null));
+    }
+
+    /**
+     * Sinaliza ao web app para usar a impressora da maquininha como fallback.
+     * Chama window.onPrintFallback(reason) se definido; caso contrário usa onPrintResult(false).
+     */
+    private void returnFallback(String reason) {
+        String safe = reason.replace("'", "\\'");
+        String js = "if(typeof window.onPrintFallback==='function')" +
+                    "{window.onPrintFallback('" + safe + "');}" +
+                    "else{window.onPrintResult(false,'" + safe + "');}";
         webView.post(() -> webView.evaluateJavascript(js, null));
     }
 }

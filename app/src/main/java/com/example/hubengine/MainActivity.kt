@@ -5,11 +5,13 @@ import android.app.Activity
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
@@ -159,12 +161,33 @@ class MainActivity : AppCompatActivity() {
                     return true
                 }
 
-                // Schemes não-web (whatsapp://, tel:, mailto:, etc.) precisam ser
-                // abertos pelo sistema — se o WebView tentar carregar, dispara erro
+                // Schemes não-web (whatsapp://, tel:, mailto:, intent://, etc.) precisam
+                // ser abertos pelo sistema — se o WebView tentar carregar, dispara erro.
                 if (scheme != "http" && scheme != "https") {
-                    try {
-                        startActivity(Intent(Intent.ACTION_VIEW, request.url))
-                    } catch (_: Exception) {}
+                    if (scheme == "intent") {
+                        // URLs intent:// (ex.: deep link do WhatsApp) NÃO podem ser abertas
+                        // com ACTION_VIEW — precisam ser desserializadas com parseUri. Se o
+                        // app alvo não estiver instalado, usa o browser_fallback_url.
+                        try {
+                            val intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME).apply {
+                                addCategory(Intent.CATEGORY_BROWSABLE)
+                                component = null
+                                selector = null
+                            }
+                            try {
+                                startActivity(intent)
+                            } catch (_: ActivityNotFoundException) {
+                                val fallback = intent.getStringExtra("browser_fallback_url")
+                                if (!fallback.isNullOrEmpty()) {
+                                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(fallback)))
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    } else {
+                        try {
+                            startActivity(Intent(Intent.ACTION_VIEW, request.url))
+                        } catch (_: Exception) {}
+                    }
                     return true
                 }
 

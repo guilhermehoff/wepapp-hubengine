@@ -30,8 +30,8 @@ android {
         applicationId = "br.com.hubengine"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 5
+        versionName = "1.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -43,6 +43,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            ndk {
+                debugSymbolLevel = "FULL"
+            }
         }
         debug {
             applicationIdSuffix = ".debug"
@@ -74,6 +77,15 @@ afterEvaluate {
                 from("${layout.buildDirectory.get()}/outputs/apk/release/app-release.apk")
                 into(desktop)
                 rename { "HubEngine-release.apk" }
+            }
+        }
+    }
+    tasks.named("bundleRelease") {
+        doLast {
+            copy {
+                from("${layout.buildDirectory.get()}/outputs/bundle/release/app-release.aab")
+                into(desktop)
+                rename { "HubEngine-release.aab" }
             }
         }
     }
